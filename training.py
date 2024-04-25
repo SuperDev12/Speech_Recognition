@@ -1,7 +1,7 @@
 import whisper
 
 # Load the dataset
-dataset = whisper.load_dataset("/path/to/dataset")
+dataset = whisper.load_dataset("/Users/superdev/Desktop/Speech_Recognition/Speech_Recognition/hindi/test")
 
 # Define training parameters
 batch_size = 32
