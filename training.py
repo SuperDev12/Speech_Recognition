@@ -1,69 +1,69 @@
-import torchaudio
+import os
+import whisper
 import torch
-from torch.utils.data import Dataset
-from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
-from transformers import Trainer, TrainingArguments
-import jiwer
+from torch.utils.data import Dataset, DataLoader
+from transformers import TrainingArguments
+from transformers import Trainer
+from transformers import default_data_collator
 
 # Define your custom dataset class
 class CustomDataset(Dataset):
-    def __init__(self, audio_path, text):
-        self.audio_path = audio_path
-        self.text = text
-        self.processor = Wav2Vec2Processor.from_pretrained("facebook/wav2vec2-large-960h")
+    def __init__(self, audio_paths, transcripts):
+        self.audio_paths = audio_paths
+        self.transcripts = transcripts
 
     def __len__(self):
-        return len(self.audio_path)
+        return len(self.audio_paths)
 
     def __getitem__(self, idx):
-        # Load and preprocess your audio and text data
-        audio, _ = torchaudio.load(self.audio_path[idx])
-        text = self.text[idx]
-        inputs = self.processor(audio.squeeze(0), return_tensors="pt", padding=True, truncation=True)
-        labels = self.processor(text, return_tensors="pt").input_ids
-        return {"input_values": inputs.input_values, "labels": labels}
+        # Load audio and transcript for the given index
+        audio_path = self.audio_paths[idx]
+        transcript = self.transcripts[idx]
 
-# Replace with the actual path to your audio file
-audio_path = "Speech_Recognition/hindi/test/audio/153/844424930627593-153-f.wav"
-text = "Your ground truth text"
+        # Preprocess audio (e.g., load, pad/trim, convert to spectrogram)
+        audio = whisper.load_audio(audio_path)
+        audio = whisper.pad_or_trim(audio)
+        mel = whisper.log_mel_spectrogram(audio)
 
-# Create your custom dataset instance
-custom_dataset = CustomDataset(audio_path, text)
+        # Convert transcript to token IDs
+        tokens = whisper.encode(transcript)
 
-# Define the training arguments
+        return {"input": mel, "labels": tokens}
+
+# Example paths to your audio files and corresponding transcripts
+audio_paths = ["/Users/superdev/Desktop/Speech_Recognition/Speech_Recognition/hindi/test/audio/153/844424930627593-153-f.wav", "/Users/superdev/Desktop/Speech_Recognition/Speech_Recognition/hindi/test/audio/153/844424930627596-153-f.wav"]
+transcripts = ["समीक्षा इस दवा के बारे में स्त्री रोग विशेषज्ञ विश्वास प्रेरित करते हैं", "रिया चक्रवर्ती को आज भायखला जेल में चटाई बिछा कर रात गुजर नहीं पड़ेगी"]
+
+# Create an instance of your custom dataset
+dataset = CustomDataset(audio_paths, transcripts)
+
+# Load the Whisper model
+model = whisper.load_model("base")
+
+# **Avoid SparseMPS backend (if applicable):**
+# Set the device explicitly to 'cpu' or 'cuda' if available
+device = torch.device("cpu")  # Or "cuda" for GPU training
+model = model.to(device)
+
+# Define the Trainer arguments
 training_args = TrainingArguments(
     output_dir="./results",
     num_train_epochs=3,
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=16,
+    per_device_train_batch_size=4,
+    save_steps=1000,
+    logging_dir="./logs",
+    logging_steps=100,
     evaluation_strategy="epoch",
-    learning_rate=1e-4,
-    save_total_limit=2,
-    save_steps=500,
-    load_best_model_at_end=True,
-    metric_for_best_model="wer",
-    greater_is_better=False,
-    save_strategy="epoch",
 )
 
-# Define the compute_wer function
-def compute_wer(pred_label_ids, predictions):
-    predicted_texts = custom_dataset.processor.batch_decode(predictions, skip_special_tokens=True)
-    true_texts = custom_dataset.processor.batch_decode(pred_label_ids, skip_special_tokens=True)
-    wer_score = jiwer.wer(true_texts, predicted_texts)
-    return {"wer": wer_score}
-
-# Create your Wav2Vec2ForCTC model instance
-model = Wav2Vec2ForCTC.from_pretrained("facebook/wav2vec2-large-960h")
-
-# Create your Trainer instance
+# Define the Trainer
 trainer = Trainer(
     model=model,
     args=training_args,
-    train_dataset=custom_dataset,
-    eval_dataset=custom_dataset,
-    compute_metrics=compute_wer,
+    train_dataset=dataset,
+    tokenizer=whisper.tokenizer,
+    data_collator=default_data_collator,
 )
 
-# Train the model
+# Start training
 trainer.train()
